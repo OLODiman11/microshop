@@ -1,11 +1,13 @@
 package by.olodiman11.microshop.orderservice.service;
 
+import by.olodiman11.microshop.orderservice.event.OrderPlacedEvent;
 import java.util.Arrays;
 import java.util.List;
 import java.util.UUID;
 
 import org.springframework.cloud.sleuth.Span;
 import org.springframework.cloud.sleuth.Tracer;
+import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.reactive.function.client.WebClient;
@@ -25,6 +27,7 @@ public class OrderService {
     private final OrderRepository orderRepository;
     private final WebClient.Builder webClientBuilder;
     private final Tracer tracer;
+    private final KafkaTemplate<String, OrderPlacedEvent> kafkaTemplate;
 
     @Transactional
     public String placeOrder(OrderRequest orderRequest) {
@@ -57,6 +60,8 @@ public class OrderService {
             order.setOrderLineItemsList(orderLineItemsList);
 
             orderRepository.save(order);
+            OrderPlacedEvent orderPlacedEvent = new OrderPlacedEvent(order.getOrderNumber());
+            kafkaTemplate.send("notificationTopic", orderPlacedEvent);
             return "Order Placed Successfully";
         }
         finally {
