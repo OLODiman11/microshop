@@ -11,6 +11,14 @@ spring:
         hibernate.ddl-auto: update
     zipkin.base-url: http://localhost:9411
     sleuth.sampler.probability: 1.0
+    kafka:
+      bootstrap-servers: localhost:9092
+      template.default-topic: notificationTopic
+      producer:
+        key-serializer: org.apache.kafka.common.serialization.StringSerializer
+        value-serializer: org.springframework.kafka.support.serializer.JsonSerializer
+        properties:
+          json.type.mapping: event:by.olodiman11.microshop.orderservice.event.OrderPlacedEvent;
 
 eureka:
   client:
