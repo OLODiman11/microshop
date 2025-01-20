@@ -24,7 +24,7 @@ public class OrderService {
     private final WebClient.Builder webClientBuilder;
 
     @Transactional
-    public void placeOrder(OrderRequest orderRequest) {
+    public String placeOrder(OrderRequest orderRequest) {
         List<String> skuCodes = orderRequest.getOrderLineItemsDtoList().stream()
             .map(OrderLineItemsDto::getSkuCode)
             .toList();
@@ -51,6 +51,7 @@ public class OrderService {
         order.setOrderLineItemsList(orderLineItemsList);
 
         orderRepository.save(order);
+        return "Order Placed Successfully";
     }
 
     private OrderLineItems mapToOrderLineItems(OrderLineItemsDto orderLineItemsDto) {
