@@ -4,6 +4,8 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.UUID;
 
+import org.springframework.cloud.sleuth.Span;
+import org.springframework.cloud.sleuth.Tracer;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.reactive.function.client.WebClient;
@@ -22,36 +24,45 @@ public class OrderService {
 
     private final OrderRepository orderRepository;
     private final WebClient.Builder webClientBuilder;
+    private final Tracer tracer;
 
     @Transactional
     public String placeOrder(OrderRequest orderRequest) {
         List<String> skuCodes = orderRequest.getOrderLineItemsDtoList().stream()
             .map(OrderLineItemsDto::getSkuCode)
             .toList();
-        
-        InventoryResponse[] inventoryResponses = webClientBuilder.build().get()
-            .uri(
-                "http://inventory-service/api/inventory", 
-                uriBuilder -> uriBuilder.queryParam("skuCode", skuCodes).build())
-            .retrieve()
-            .bodyToMono(InventoryResponse[].class)
-            .block();
 
-        boolean allInStock = Arrays.stream(inventoryResponses)
-            .allMatch(InventoryResponse::isInStock);
+        Span inventoryServiceLookup = tracer.nextSpan().name("InventoryServiceLookup");
 
-        if(!allInStock) 
-            throw new IllegalArgumentException("Not all product are in stock");
+        try(Tracer.SpanInScope spanInScope = tracer.withSpan(inventoryServiceLookup.start())) {
+            InventoryResponse[] inventoryResponses = webClientBuilder.build().get()
+                    .uri(
+                            "http://inventory-service/api/inventory",
+                            uriBuilder -> uriBuilder.queryParam("skuCode", skuCodes).build())
+                    .retrieve()
+                    .bodyToMono(InventoryResponse[].class)
+                    .block();
 
-        List<OrderLineItems> orderLineItemsList = orderRequest.getOrderLineItemsDtoList().stream()
-            .map(this::mapToOrderLineItems)
-            .toList();
-        Order order = new Order();
-        order.setOrderNumber(UUID.randomUUID().toString());
-        order.setOrderLineItemsList(orderLineItemsList);
+            boolean allInStock = Arrays.stream(inventoryResponses)
+                    .allMatch(InventoryResponse::isInStock);
 
-        orderRepository.save(order);
-        return "Order Placed Successfully";
+            if (!allInStock)
+                throw new IllegalArgumentException("Not all product are in stock");
+
+            List<OrderLineItems> orderLineItemsList = orderRequest.getOrderLineItemsDtoList().stream()
+                    .map(this::mapToOrderLineItems)
+                    .toList();
+            Order order = new Order();
+            order.setOrderNumber(UUID.randomUUID().toString());
+            order.setOrderLineItemsList(orderLineItemsList);
+
+            orderRepository.save(order);
+            return "Order Placed Successfully";
+        }
+        finally {
+            inventoryServiceLookup.end();
+        }
+
     }
 
     private OrderLineItems mapToOrderLineItems(OrderLineItemsDto orderLineItemsDto) {
