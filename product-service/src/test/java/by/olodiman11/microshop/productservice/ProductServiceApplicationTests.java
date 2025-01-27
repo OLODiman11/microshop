@@ -56,12 +56,12 @@ class ProductServiceApplicationTests {
 	@Test
 	void createProduct_createsProduct() throws Exception {
 		ProductRequest productRequest = getProductRequest();
-		String productReqiestJson = objectMapper.writeValueAsString(productRequest);
+		String productRequestJson = objectMapper.writeValueAsString(productRequest);
 		mockMvc
 			.perform(MockMvcRequestBuilders
 				.post("/api/product")
 				.contentType(MediaType.APPLICATION_JSON)
-				.content(productReqiestJson))
+				.content(productRequestJson))
 			.andExpect(status().isCreated());	
 		assertEquals(1, productRepository.findAll().size());		
 	}

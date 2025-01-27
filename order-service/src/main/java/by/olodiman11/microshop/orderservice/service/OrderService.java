@@ -5,8 +5,6 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.UUID;
 
-import org.springframework.cloud.sleuth.Span;
-import org.springframework.cloud.sleuth.Tracer;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -26,7 +24,6 @@ public class OrderService {
 
     private final OrderRepository orderRepository;
     private final WebClient.Builder webClientBuilder;
-    private final Tracer tracer;
     private final KafkaTemplate<String, OrderPlacedEvent> kafkaTemplate;
 
     @Transactional
@@ -35,39 +32,32 @@ public class OrderService {
             .map(OrderLineItemsDto::getSkuCode)
             .toList();
 
-        Span inventoryServiceLookup = tracer.nextSpan().name("InventoryServiceLookup");
+        InventoryResponse[] inventoryResponses = webClientBuilder.build()
+                .get()
+                .uri(
+                        "http://inventory-service/api/inventory",
+                        uriBuilder -> uriBuilder.queryParam("skuCode", skuCodes).build())
+                .retrieve()
+                .bodyToMono(InventoryResponse[].class)
+                .block();
 
-        try(Tracer.SpanInScope spanInScope = tracer.withSpan(inventoryServiceLookup.start())) {
-            InventoryResponse[] inventoryResponses = webClientBuilder.build().get()
-                    .uri(
-                            "http://inventory-service/api/inventory",
-                            uriBuilder -> uriBuilder.queryParam("skuCode", skuCodes).build())
-                    .retrieve()
-                    .bodyToMono(InventoryResponse[].class)
-                    .block();
+        boolean allInStock = Arrays.stream(inventoryResponses)
+                .allMatch(InventoryResponse::isInStock);
 
-            boolean allInStock = Arrays.stream(inventoryResponses)
-                    .allMatch(InventoryResponse::isInStock);
+        if (!allInStock)
+            throw new IllegalArgumentException("Not all product are in stock");
 
-            if (!allInStock)
-                throw new IllegalArgumentException("Not all product are in stock");
+        List<OrderLineItems> orderLineItemsList = orderRequest.getOrderLineItemsDtoList().stream()
+                .map(this::mapToOrderLineItems)
+                .toList();
+        Order order = new Order();
+        order.setOrderNumber(UUID.randomUUID().toString());
+        order.setOrderLineItemsList(orderLineItemsList);
 
-            List<OrderLineItems> orderLineItemsList = orderRequest.getOrderLineItemsDtoList().stream()
-                    .map(this::mapToOrderLineItems)
-                    .toList();
-            Order order = new Order();
-            order.setOrderNumber(UUID.randomUUID().toString());
-            order.setOrderLineItemsList(orderLineItemsList);
-
-            orderRepository.save(order);
-            OrderPlacedEvent orderPlacedEvent = new OrderPlacedEvent(order.getOrderNumber());
-            kafkaTemplate.send("notificationTopic", orderPlacedEvent);
-            return "Order Placed Successfully";
-        }
-        finally {
-            inventoryServiceLookup.end();
-        }
-
+        orderRepository.save(order);
+        OrderPlacedEvent orderPlacedEvent = new OrderPlacedEvent(order.getOrderNumber());
+        kafkaTemplate.send("notificationTopic", orderPlacedEvent);
+        return "Order Placed Successfully";
     }
 
     private OrderLineItems mapToOrderLineItems(OrderLineItemsDto orderLineItemsDto) {
