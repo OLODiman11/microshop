@@ -1,0 +1,76 @@
+services:
+  keycloak:
+    image: quay.io/keycloak/keycloak:23.0.7
+    container_name: keycloak
+    environment:
+      DB_VENDOR: postgres
+      DB_ADDR: database
+      DB_PORT: 5432
+      DB_SCHEMA: public
+      DB_DATABASE: keycloak
+      DB_USER: keycloak
+      DB_PASSWORD: password
+
+      KC_HOSTNAME: localhost
+      KC_HOSTNAME_PORT: 8181
+      KC_HOSTNAME_STRICT: false
+      KC_HOSTNAME_STRICT_HTTPS: false
+
+      KC_LOG_LEVEL: info
+      KC_METRICS_ENABLED: true
+      KC_HEALTH_ENABLED: true
+      KEYCLOAK_ADMIN: admin
+      KEYCLOAK_ADMIN_PASSWORD: admin
+    command: ["start-dev", "--import-realm"]
+    depends_on:
+      - keycloak-postgres
+    ports:
+      - "8181:8080"
+
+  keycloak-postgres:
+    image: postgres:15
+    volumes:
+      - ./volume-data/postgres_keycloak_data:/var/lib/postgresql/data
+    ports:
+      - "5434:5432"
+    environment:
+      POSTGRES_DB: keycloak
+      POSTGRES_USER: keycloak
+      POSTGRES_PASSWORD: password
+
+  loki:
+    image: grafana/loki:main
+    command: [ "-config.file=/etc/loki/local-config.yaml" ]
+    ports:
+      - "3100:3100"
+
+  prometheus:
+    image: prom/prometheus:v2.46.0
+    command:
+      - --enable-feature=exemplar-storage
+      - --config.file=/etc/prometheus/prometheus.yaml
+    volumes:
+      - ./docker/prometheus/prometheus.yaml:/etc/prometheus/prometheus.yaml:ro
+    ports:
+      - "9090:9090"
+
+  tempo:
+    image: grafana/tempo:2.2.2
+    command: [ "-config.file=/etc/tempo.yaml" ]
+    volumes:
+      - ./docker/tempo/tempo.yaml:/etc/tempo.yaml:ro
+      - ./docker/tempo/tempo-data:/tmp/tempo
+    ports:
+      - "3110:3100"
+      - "9411:9411"
+
+  grafana:
+    image: grafana/grafana:10.1.0
+    volumes:
+      - ./docker/grafana:/etc/grafana/provisioning/datasources:ro
+    environment:
+      - GF_AUTH_ANONYMOUS_ENABLED=true
+      - GF_AUTH_ANONYMOUS_ORG_ROLE=Admin
+      - GF_AUTH_DISABLE_LOGIN_FORM=true
+    ports:
+      - "3000:3000"

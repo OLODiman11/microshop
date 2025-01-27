@@ -1,11 +1,16 @@
 package by.olodiman11.microshop.orderservice.service;
 
+import by.olodiman11.microshop.orderservice.event.OrderPlacedEvent;
+import java.util.Arrays;
 import java.util.List;
 import java.util.UUID;
 
+import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.reactive.function.client.WebClient;
 
+import by.olodiman11.microshop.orderservice.dto.InventoryResponse;
 import by.olodiman11.microshop.orderservice.dto.OrderLineItemsDto;
 import by.olodiman11.microshop.orderservice.dto.OrderRequest;
 import by.olodiman11.microshop.orderservice.model.Order;
@@ -18,17 +23,41 @@ import lombok.RequiredArgsConstructor;
 public class OrderService {
 
     private final OrderRepository orderRepository;
+    private final WebClient.Builder webClientBuilder;
+    private final KafkaTemplate<String, OrderPlacedEvent> kafkaTemplate;
 
     @Transactional
-    public void placeOrder(OrderRequest orderRequest) {
-        List<OrderLineItems> orderLineItemsList = orderRequest.getOrderLineItemsDtoList().stream()
-            .map(this::mapToOrderLineItems)
+    public String placeOrder(OrderRequest orderRequest) {
+        List<String> skuCodes = orderRequest.getOrderLineItemsDtoList().stream()
+            .map(OrderLineItemsDto::getSkuCode)
             .toList();
+
+        InventoryResponse[] inventoryResponses = webClientBuilder.build()
+                .get()
+                .uri(
+                        "http://inventory-service/api/inventory",
+                        uriBuilder -> uriBuilder.queryParam("skuCode", skuCodes).build())
+                .retrieve()
+                .bodyToMono(InventoryResponse[].class)
+                .block();
+
+        boolean allInStock = Arrays.stream(inventoryResponses)
+                .allMatch(InventoryResponse::isInStock);
+
+        if (!allInStock)
+            throw new IllegalArgumentException("Not all product are in stock");
+
+        List<OrderLineItems> orderLineItemsList = orderRequest.getOrderLineItemsDtoList().stream()
+                .map(this::mapToOrderLineItems)
+                .toList();
         Order order = new Order();
         order.setOrderNumber(UUID.randomUUID().toString());
         order.setOrderLineItemsList(orderLineItemsList);
 
         orderRepository.save(order);
+        OrderPlacedEvent orderPlacedEvent = new OrderPlacedEvent(order.getOrderNumber());
+        kafkaTemplate.send("notificationTopic", orderPlacedEvent);
+        return "Order Placed Successfully";
     }
 
     private OrderLineItems mapToOrderLineItems(OrderLineItemsDto orderLineItemsDto) {
